@@ -1,7 +1,7 @@
 {
     "system": {
-        "tensorflow_source": "pip",
-        "tensorflow_wheel_path": null,
+        "tensorflow_source": "wheel",
+        "tensorflow_wheel_path": "tensorflow_cpu-2.21.0-cp313-cp313-linux_x86_64.whl",
         "tensorflow_version": "2.21.0",
         "use_gpu": false,
         "cache_dir": "./cache"

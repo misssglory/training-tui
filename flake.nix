@@ -110,19 +110,12 @@
               procps
               htop
             ] ++ (if useGPU then [ 
-              # pkgs.cudatoolkit 
-              # pkgs.cudnn 
             ] else []);
             
             shellHook = ''
               # Set up library paths
               export LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zeromq}/lib:${pkgs.libsodium}/lib:${pkgs.libffi}/lib:${pkgs.openssl}/lib:${pkgs.libGL}/lib:${pkgs.libGLU}/lib:$LD_LIBRARY_PATH
               
-              # Set CUDA paths if GPU is enabled
-              if [ "${if useGPU then "true" else "false"}" = "true" ]; then
-                # export CUDA_PATH=${pkgs.cudatoolkit}
-                # export LD_LIBRARY_PATH=${pkgs.cudatoolkit}/lib:${pkgs.cudnn}/lib:$LD_LIBRARY_PATH
-              fi
               
               # Create and activate uv virtual environment
               if [ ! -d ".venv" ]; then
@@ -138,6 +131,9 @@
               uv pip install --upgrade pip setuptools wheel
               
               # Install base dependencies
+
+              echo $TF_WHEEL
+              echo $TF_SOURCE
               echo "Installing base dependencies..."
               uv pip install textual numpy loguru psutil matplotlib pillow scikit-learn pandas
               
@@ -148,11 +144,14 @@
               # Install TensorFlow based on configuration
               echo "Installing TensorFlow 2.21..."
               if [ -f "config.json" ]; then
-                TF_SOURCE=$(python -c 'import json; print(json.load(open("config.json")).get("system", {}).get("tensorflow_source", "pip"))' 2>/dev/null || echo "pip")
-                TF_WHEEL=$(python -c 'import json; print(json.load(open("config.json")).get("system", {}).get("tensorflow_wheel_path", ""))' 2>/dev/null || echo "")
+                TF_SOURCE=$(python -c 'import json; print(json.load(open("config.json")).get("system", {}).get("tensorflow_source", "pip"))' )
+                TF_WHEEL=$(python -c 'import json; print(json.load(open("config.json")).get("system", {}).get("tensorflow_wheel_path", ""))')
                 USE_GPU_CONFIG=$(python -c 'import json; print(json.load(open("config.json")).get("system", {}).get("use_gpu", False))' 2>/dev/null || echo "False")
+                echo $TF_WHEEL
+                echo $TF_SOURCE
                 
                 if [ "$TF_SOURCE" = "wheel" ] && [ -n "$TF_WHEEL" ] && [ -f "$TF_WHEEL" ]; then
+                
                   echo "Installing TensorFlow from wheel: $TF_WHEEL"
                   uv pip install "$TF_WHEEL"
                 elif [ "$TF_SOURCE" = "pip" ]; then
@@ -179,6 +178,7 @@
               uv pip install black isort ruff pytest mypy pylint
               
               # Install optional dependencies
+
               echo "Installing optional dependencies..."
               uv pip install climage jupyter jupyterlab ipywidgets tqdm
               

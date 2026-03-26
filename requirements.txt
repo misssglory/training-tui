@@ -1,7 +1,7 @@
 # Core dependencies
 textual>=0.41.0
 keras>=3.0.0
-numpy>=1.26.0,<2.0.0
+numpy
 loguru>=0.7.0
 psutil>=5.9.0
 
