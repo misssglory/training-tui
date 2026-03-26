@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Virtual environment
+.venv/
+
+# Output directories
+outputs/
+cache/
+*.log
+*.keras
+*.h5
+*.pb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Nix
+result/
+*.drv
+
+# Config backups
+config.json.bak
+*.json.bak
+
+# TensorFlow wheel files
+*.whl
+tensorflow_custom.whl
+
+# Attention maps
+attention_maps/
+*.png
+*.jpg
+*.gif

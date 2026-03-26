@@ -1,0 +1,33 @@
+# Core dependencies
+textual>=0.41.0
+keras>=3.0.0
+numpy>=1.26.0,<2.0.0
+loguru>=0.7.0
+psutil>=5.9.0
+
+# TensorFlow 2.21 (will be installed based on config)
+# tensorflow==2.21.0
+# tensorflow-cpu==2.21.0
+
+# For attention visualizations
+climage>=0.2.0
+matplotlib>=3.8.0
+Pillow>=10.0.0
+
+# Data processing
+scikit-learn>=1.4.0
+pandas>=2.1.0
+
+# Development
+black>=24.0.0
+isort>=5.13.0
+pytest>=8.0.0
+mypy>=1.8.0
+pylint>=3.0.0
+ruff>=0.1.0
+
+# Jupyter support
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+ipywidgets>=8.1.0
+tqdm>=4.66.0
