@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 import numpy as np
 
+
 class DatasetView(Vertical):
     def compose(self):
         yield Label("Dataset Statistics", classes="title")

@@ -24,9 +24,40 @@ class Trainer:
         if precision == 'fp16':
             keras.mixed_precision.set_global_policy('mixed_float16')
         
+        # Build model if not already built (with dummy input)
+        if not model.built:
+            self._build_model_with_dummy_input()
+        
         # Compile model
         self._compile_model()
-    
+
+    def _build_model_with_dummy_input(self):
+        """Build the model with dummy input."""
+        try:
+            batch_size = self.config.get('model.batch_size', 32)
+            max_len = self.config.get('model.max_len', 100)
+            
+            # Create dummy inputs
+            dummy_input = keras.ops.zeros((batch_size, max_len), dtype='int32')
+            dummy_target = keras.ops.zeros((batch_size, max_len), dtype='int32')
+            
+            # Call the model to build it
+            if isinstance(self.model, (Transformer, TransformerQA, BertLikeTransformer)):
+                self.model([dummy_input, dummy_target], training=False)
+            elif hasattr(self.model, 'call'):
+                try:
+                    self.model(dummy_input, training=False)
+                except:
+                    pass
+            
+            logger.info(f"Model built successfully with input shape: ({batch_size}, {max_len})")
+            logger.info(f"Model parameters: {self.model.count_params():,}")
+            
+        except Exception as e:
+            logger.warning(f"Could not build model automatically: {e}")
+            logger.info("Model will be built during first training step") 
+
+
     def _compile_model(self):
         learning_rate = self.config.get('model.learning_rate', 0.001)
         self.model.compile(

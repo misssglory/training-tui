@@ -8,7 +8,6 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
 
-
 class ModelSummaryView(Vertical):
     """Model summary view showing architecture, parameters, and layer details."""
     
@@ -62,9 +61,9 @@ class ModelSummaryView(Vertical):
         
         with Horizontal(id="button_row"):
             yield Button("Refresh Summary", id="refresh_summary", variant="primary")
-            yield Button("Build Model", id="build_model", variant="warning")
             yield Button("Export Summary", id="export_summary", variant="default")
             yield Button("Save Model Config", id="save_config", variant="default")
+            yield Button("Build Model", id="build_model", variant="warning")
         
         with TabbedContent():
             with TabPane("Layer Summary", id="layer_summary"):
@@ -88,7 +87,7 @@ class ModelSummaryView(Vertical):
         """Setup the data tables with appropriate columns."""
         # Layers table
         layers_table = self.query_one("#layers_table")
-        layers_table.add_columns("Layer #", "Layer Name", "Layer Type", "Output Shape", "Parameters", "Built")
+        layers_table.add_columns("Layer #", "Layer Name", "Layer Type", "Output Shape", "Parameters", "Trainable")
         
         # Parameters table
         params_table = self.query_one("#params_table")
@@ -108,10 +107,14 @@ class ModelSummaryView(Vertical):
         if not self.model:
             return
         
-        # Display layers table (works even if not built)
+        # Build model if not already built
+        if not self.model.built:
+            self.build_model_with_dummy_input()
+        
+        # Display layers table
         self.display_layers_table()
         
-        # Display parameters statistics (shows built status)
+        # Display parameters statistics
         self.display_param_stats()
         
         # Display layer details
@@ -120,19 +123,48 @@ class ModelSummaryView(Vertical):
         # Display model graph info
         self.display_model_graph()
     
-    def get_layer_param_count(self, layer):
-        """Safely get layer parameter count."""
+    def build_model_with_dummy_input(self):
+        """Build the model with dummy input to initialize layers."""
         try:
-            if layer.built:
-                return layer.count_params()
-            else:
-                # Try to count weights manually
+            batch_size = self.app.config.get('model.batch_size', 32)
+            max_len = self.app.config.get('model.max_len', 100)
+            
+            # Create dummy inputs
+            dummy_input = keras.ops.zeros((batch_size, max_len), dtype='int32')
+            dummy_target = keras.ops.zeros((batch_size, max_len), dtype='int32')
+            
+            # Call the model to build it
+            if isinstance(self.model, (Transformer, TransformerQA, BertLikeTransformer)):
+                self.model([dummy_input, dummy_target], training=False)
+            elif hasattr(self.model, 'call') and hasattr(self.model, 'input_spec'):
+                # Try to build with single input if it's a different model type
                 try:
-                    return sum([np.prod(w.shape) for w in layer.weights]) if layer.weights else 0
+                    self.model(dummy_input, training=False)
                 except:
-                    return 0
-        except:
-            return 0
+                    pass
+            
+            print(f"Model built successfully with input shape: ({batch_size}, {max_len})")
+            
+        except Exception as e:
+            print(f"Error building model: {e}")
+            # Try alternative building method
+            try:
+                # Build each layer individually
+                for layer in self.model.layers:
+                    if not layer.built:
+                        if hasattr(layer, 'build'):
+                            # Determine input shape for the layer
+                            if isinstance(layer, keras.layers.Embedding):
+                                input_dim = self.app.config.get('model.vocab_size', 10000)
+                                output_dim = self.app.config.get('model.d_model', 512)
+                                layer.build((None, None))
+                            elif hasattr(layer, 'units'):
+                                layer.build((None, layer.units))
+                            else:
+                                layer.build((None, self.app.config.get('model.max_len', 100)))
+                print("Model built using layer-by-layer approach")
+            except Exception as e2:
+                print(f"Error in layer-by-layer build: {e2}")
     
     def display_layers_table(self):
         """Display all layers with their details."""
@@ -142,7 +174,6 @@ class ModelSummaryView(Vertical):
         total_params = 0
         trainable_params = 0
         non_trainable_params = 0
-        built_layers = 0
         
         for i, layer in enumerate(self.model.layers):
             # Get layer info
@@ -151,17 +182,25 @@ class ModelSummaryView(Vertical):
             
             # Get output shape
             try:
-                if layer.built and hasattr(layer, 'output_shape'):
+                if layer.built:
                     output_shape = str(layer.output_shape)
                 else:
                     output_shape = "Not built"
             except:
                 output_shape = "Unknown"
             
-            # Get parameter counts safely
-            param_count = self.get_layer_param_count(layer)
-            trainable = sum([1 for w in layer.trainable_weights]) if layer.trainable_weights else 0
-            is_built = "Yes" if layer.built else "No"
+            # Get parameter counts
+            try:
+                param_count = layer.count_params()
+            except ValueError:
+                # Layer not built, try to count weights manually
+                try:
+                    param_count = sum([w.numpy().size for w in layer.weights]) if layer.weights else 0
+                except:
+                    param_count = 0
+            
+            trainable = sum([1 for w in layer.trainable_weights])
+            is_trainable = "Yes" if trainable > 0 else "No"
             
             if trainable > 0:
                 trainable_params += param_count
@@ -169,8 +208,6 @@ class ModelSummaryView(Vertical):
                 non_trainable_params += param_count
             
             total_params += param_count
-            if layer.built:
-                built_layers += 1
             
             # Add row
             layers_table.add_row(
@@ -179,15 +216,14 @@ class ModelSummaryView(Vertical):
                 layer_type,
                 output_shape,
                 f"{param_count:,}" if param_count > 0 else "0",
-                is_built
+                is_trainable
             )
         
         # Add summary row
-        total_layers = len(self.model.layers)
         layers_table.add_row(
             "TOTAL",
-            f"{total_layers} layers",
-            f"{built_layers} built",
+            "-",
+            "-",
             "-",
             f"{total_params:,}",
             f"Trainable: {trainable_params:,}"
@@ -197,9 +233,7 @@ class ModelSummaryView(Vertical):
         self.param_counts = {
             'total': total_params,
             'trainable': trainable_params,
-            'non_trainable': non_trainable_params,
-            'built_layers': built_layers,
-            'total_layers': total_layers
+            'non_trainable': non_trainable_params
         }
     
     def display_param_stats(self):
@@ -214,34 +248,28 @@ class ModelSummaryView(Vertical):
         params_table.add_row("Total Parameters", f"{self.param_counts['total']:,}")
         params_table.add_row("Trainable Parameters", f"{self.param_counts['trainable']:,}")
         params_table.add_row("Non-trainable Parameters", f"{self.param_counts['non_trainable']:,}")
-        params_table.add_row("Built Layers", f"{self.param_counts['built_layers']} / {self.param_counts['total_layers']}")
         
-        # Memory estimation (only if model is built)
-        if self.param_counts['built_layers'] > 0:
-            param_memory_mb = (self.param_counts['total'] * 4) / (1024 * 1024)
-            params_table.add_row("Estimated Memory (FP32)", f"{param_memory_mb:.2f} MB")
-        else:
-            params_table.add_row("Estimated Memory", "Model not built - train first")
+        # Memory estimation
+        param_memory_mb = (self.param_counts['total'] * 4) / (1024 * 1024)
+        params_table.add_row("Estimated Memory (FP32)", f"{param_memory_mb:.2f} MB")
+        
+        # Add layer type distribution
+        layer_types = {}
+        for layer in self.model.layers:
+            layer_type = layer.__class__.__name__
+            layer_types[layer_type] = layer_types.get(layer_type, 0) + 1
+        
+        if layer_types:
+            params_table.add_row("", "")
+            params_table.add_row("Layer Type Distribution", "")
+            for layer_type, count in layer_types.items():
+                params_table.add_row(f"  {layer_type}", str(count))
         
         # Add model type info
         params_table.add_row("", "")
         params_table.add_row("Model Information", "")
         params_table.add_row("  Model Class", self.model.__class__.__name__)
-        params_table.add_row("  Built Status", "Built" if self.model.built else "Not built")
-        
-        # Add layer type distribution (only for built layers)
-        if self.param_counts['built_layers'] > 0:
-            layer_types = {}
-            for layer in self.model.layers:
-                if layer.built:
-                    layer_type = layer.__class__.__name__
-                    layer_types[layer_type] = layer_types.get(layer_type, 0) + 1
-            
-            if layer_types:
-                params_table.add_row("", "")
-                params_table.add_row("Layer Type Distribution", "")
-                for layer_type, count in layer_types.items():
-                    params_table.add_row(f"  {layer_type}", str(count))
+        params_table.add_row("  Built", str(self.model.built))
     
     def display_layer_details(self):
         """Display detailed information about each layer."""
@@ -262,7 +290,7 @@ class ModelSummaryView(Vertical):
             
             # Output shape
             try:
-                if layer.built and hasattr(layer, 'output_shape'):
+                if layer.built:
                     details.append(f"  Output shape: {layer.output_shape}")
                 else:
                     details.append("  Output shape: Not built")
@@ -270,21 +298,26 @@ class ModelSummaryView(Vertical):
                 details.append("  Output shape: Unknown")
             
             # Parameters
-            param_count = self.get_layer_param_count(layer)
-            details.append(f"  Parameters: {param_count:,}")
+            try:
+                param_count = layer.count_params()
+                details.append(f"  Parameters: {param_count:,}")
+            except:
+                details.append("  Parameters: Not available (layer not built)")
             
             # Built status
             details.append(f"  Built: {layer.built}")
             
-            # Trainable weights (only if built)
-            if layer.built and layer.trainable_weights:
-                details.append(f"  Trainable weights: {len(layer.trainable_weights)}")
-                for weight in layer.trainable_weights[:3]:
+            # Trainable weights
+            trainable_weights = layer.trainable_weights
+            if trainable_weights:
+                details.append(f"  Trainable weights: {len(trainable_weights)}")
+                for weight in trainable_weights[:3]:
                     details.append(f"    - {weight.name}: {weight.shape}")
             
             # Non-trainable weights
-            if layer.non_trainable_weights:
-                details.append(f"  Non-trainable weights: {len(layer.non_trainable_weights)}")
+            non_trainable_weights = layer.non_trainable_weights
+            if non_trainable_weights:
+                details.append(f"  Non-trainable weights: {len(non_trainable_weights)}")
             
             # Layer-specific configuration
             if hasattr(layer, 'units'):
@@ -299,12 +332,6 @@ class ModelSummaryView(Vertical):
                 details.append(f"  Activation: {layer.activation}")
             if hasattr(layer, 'vocab_size'):
                 details.append(f"  Vocab size: {layer.vocab_size}")
-        
-        # Add note about building
-        if self.param_counts.get('built_layers', 0) < self.param_counts.get('total_layers', 0):
-            details.append("\n" + "=" * 80)
-            details.append("NOTE: Model is not fully built. Click 'Build Model' to initialize all layers.")
-            details.append("=" * 80)
         
         details_text.update("\n".join(details))
     
@@ -322,35 +349,62 @@ class ModelSummaryView(Vertical):
         graph.append("=" * 80)
         graph.append("")
         
-        # Display model info
-        graph.append(f"Model: {self.model.__class__.__name__}")
-        graph.append(f"Built: {self.model.built}")
-        graph.append("")
+        # Build dependency graph
+        connections = {}
+        for layer in self.model.layers:
+            layer_name = layer.name
+            connections[layer_name] = []
+            
+            # Try to find connections
+            try:
+                if hasattr(layer, '_inbound_nodes'):
+                    for node in layer._inbound_nodes:
+                        if hasattr(node, 'inbound_layers'):
+                            for inbound in node.inbound_layers:
+                                if hasattr(inbound, 'name'):
+                                    connections[layer_name].append(inbound.name)
+            except:
+                pass
+        
+        # Display graph in a hierarchical way
+        graph.append("Layer Connections:")
+        graph.append("-" * 40)
+        
+        # Find input layers
+        input_layers = [l for l in self.model.layers if len(connections.get(l.name, [])) == 0]
+        
+        if input_layers:
+            graph.append("\nInput Layers:")
+            for layer in input_layers:
+                graph.append(f"  └─ {layer.name} ({layer.__class__.__name__})")
         
         # Display all layers
-        graph.append("Layer List:")
+        graph.append("\n\nComplete Layer List:")
         graph.append("-" * 40)
         
         for i, layer in enumerate(self.model.layers):
             graph.append(f"\n[{i}] {layer.name}")
             graph.append(f"    Type: {layer.__class__.__name__}")
             graph.append(f"    Built: {layer.built}")
-            graph.append(f"    Parameters: {self.get_layer_param_count(layer):,}")
+            
+            # Input connections
+            inbound = connections.get(layer.name, [])
+            if inbound:
+                graph.append(f"    Inputs from: {', '.join(inbound)}")
             
             # Output shape
             try:
-                if layer.built and hasattr(layer, 'output_shape'):
+                if layer.built:
                     graph.append(f"    Output shape: {layer.output_shape}")
             except:
                 pass
-        
-        # Add building instructions
-        if not self.model.built:
-            graph.append("\n" + "=" * 80)
-            graph.append("Model is not built. To build the model:")
-            graph.append("1. Click the 'Build Model' button above")
-            graph.append("2. Or start training (model will be built automatically)")
-            graph.append("=" * 80)
+            
+            # Parameter count
+            try:
+                param_count = layer.count_params()
+                graph.append(f"    Parameters: {param_count:,}")
+            except:
+                graph.append(f"    Parameters: Not built")
         
         graph_text.update("\n".join(graph))
     
@@ -358,7 +412,7 @@ class ModelSummaryView(Vertical):
         """Display message when no model is available."""
         layers_table = self.query_one("#layers_table")
         layers_table.clear()
-        layers_table.add_row("Status", "No model loaded", "", "", "", "")
+        layers_table.add_row("No model loaded", "Please initialize model first")
         
         params_table = self.query_one("#params_table")
         params_table.clear()
@@ -366,53 +420,10 @@ class ModelSummaryView(Vertical):
         params_table.add_row("Action", "Use Configuration tab to initialize model")
         
         details_text = self.query_one("#layer_details_text")
-        details_text.update("No model loaded.\n\nSteps to initialize:\n1. Go to Configuration tab\n2. Configure model parameters\n3. Click 'Apply and Reinit Model'")
+        details_text.update("No model loaded. Please ensure a model is initialized.\n\nSteps:\n1. Go to Configuration tab\n2. Configure model parameters\n3. Click 'Apply and Reinit Model'")
         
         graph_text = self.query_one("#model_graph_text")
-        graph_text.update("No model loaded. Model will be created when you configure and apply settings.")
-    
-    def build_model_with_dummy_input(self):
-        """Build the model with dummy input."""
-        try:
-            batch_size = self.app.config.get('model.batch_size', 32)
-            max_len = self.app.config.get('model.max_len', 100)
-            
-            # Create dummy inputs
-            dummy_input = keras.ops.zeros((batch_size, max_len), dtype='int32')
-            dummy_target = keras.ops.zeros((batch_size, max_len), dtype='int32')
-            
-            # Call the model to build it
-            if hasattr(self.model, 'call'):
-                # Try to call with appropriate inputs
-                try:
-                    self.model([dummy_input, dummy_target], training=False)
-                except:
-                    try:
-                        self.model(dummy_input, training=False)
-                    except:
-                        pass
-            
-            # Also try to build each layer individually
-            for layer in self.model.layers:
-                if not layer.built:
-                    try:
-                        if hasattr(layer, 'build'):
-                            if isinstance(layer, keras.layers.Embedding):
-                                input_dim = self.app.config.get('model.vocab_size', 10000)
-                                output_dim = self.app.config.get('model.d_model', 512)
-                                layer.build((None, None))
-                            else:
-                                layer.build((None, max_len))
-                    except:
-                        pass
-            
-            self.app.notify("Model built successfully!")
-            self.load_model_summary()
-            return True
-            
-        except Exception as e:
-            self.app.notify(f"Error building model: {str(e)}", severity="error")
-            return False
+        graph_text.update("No model loaded. Model will be built when training starts or when you click 'Build Model'.")
     
     @on(Button.Pressed, "#refresh_summary")
     def refresh_summary(self):
@@ -423,11 +434,12 @@ class ModelSummaryView(Vertical):
     @on(Button.Pressed, "#build_model")
     def build_model(self):
         """Manually build the model."""
-        if not self.model:
-            self.app.notify("No model to build", severity="error")
-            return
-        
-        self.build_model_with_dummy_input()
+        try:
+            self.build_model_with_dummy_input()
+            self.load_model_summary()
+            self.app.notify("Model built successfully!")
+        except Exception as e:
+            self.app.notify(f"Error building model: {str(e)}", severity="error")
     
     @on(Button.Pressed, "#export_summary")
     def export_summary(self):
@@ -452,8 +464,7 @@ class ModelSummaryView(Vertical):
             # Write model info
             f.write(f"Model Type: {self.model.__class__.__name__}\n")
             f.write(f"Built: {self.model.built}\n")
-            f.write(f"Total Parameters: {self.param_counts.get('total', 0):,}\n")
-            f.write(f"Built Layers: {self.param_counts.get('built_layers', 0)} / {self.param_counts.get('total_layers', 0)}\n\n")
+            f.write(f"Total Parameters: {self.param_counts.get('total', 0):,}\n\n")
             
             # Write layer details
             for i, layer in enumerate(self.model.layers):
@@ -461,13 +472,17 @@ class ModelSummaryView(Vertical):
                 f.write("-" * 60 + "\n")
                 
                 try:
-                    if layer.built and hasattr(layer, 'output_shape'):
+                    if layer.built:
                         f.write(f"  Output shape: {layer.output_shape}\n")
                 except:
                     pass
                 
-                param_count = self.get_layer_param_count(layer)
-                f.write(f"  Parameters: {param_count:,}\n")
+                try:
+                    param_count = layer.count_params()
+                    f.write(f"  Parameters: {param_count:,}\n")
+                except:
+                    f.write("  Parameters: Not built\n")
+                
                 f.write(f"  Built: {layer.built}\n")
                 
                 if hasattr(layer, 'units'):
@@ -502,7 +517,6 @@ class ModelSummaryView(Vertical):
                 'total_parameters': self.param_counts.get('total', 0),
                 'trainable_parameters': self.param_counts.get('trainable', 0),
                 'layer_count': len(self.model.layers),
-                'built_layers': self.param_counts.get('built_layers', 0),
                 'built': self.model.built,
                 'timestamp': timestamp,
                 'config': model_config
@@ -514,3 +528,7 @@ class ModelSummaryView(Vertical):
             self.app.notify(f"Model config saved to {config_path}")
         except Exception as e:
             self.app.notify(f"Error saving config: {e}", severity="error")
+
+
+# Import needed for type hints
+from models.transformer import Transformer, TransformerQA, BertLikeTransformer

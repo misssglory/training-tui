@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from datetime import datetime
 
+
 class TrainingView(Vertical):
     """Training view with logs, history, and progress monitoring."""
     
