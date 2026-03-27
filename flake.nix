@@ -135,7 +135,7 @@
               echo $TF_WHEEL
               echo $TF_SOURCE
               echo "Installing base dependencies..."
-              uv pip install textual numpy loguru psutil matplotlib pillow scikit-learn pandas
+              uv pip install textual numpy loguru psutil matplotlib pillow scikit-learn pandas pyperclip
               
               # Install Keras 3
               echo "Installing Keras 3..."

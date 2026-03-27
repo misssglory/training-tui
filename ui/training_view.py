@@ -1,168 +1,212 @@
-from textual.widgets import Button, TextArea, Label, Static, ProgressBar, DataTable
-from textual.containers import Horizontal, Vertical
+"""Training view for model training."""
+from textual.containers import Vertical, Horizontal
+from textual.widgets import Button, Label, Input, ProgressBar
 from textual import on
 import threading
-from loguru import logger
-import json
-from pathlib import Path
 import time
-from datetime import datetime
+from loguru import logger
 
 
 class TrainingView(Vertical):
-    """Training view with logs, history, and progress monitoring."""
+    """View for training configuration and monitoring."""
+    
+    DEFAULT_CSS = """
+    TrainingView {
+        height: 100%;
+        padding: 1;
+    }
+    
+    .config-section {
+        border: solid $primary;
+        margin: 1 0;
+        padding: 1;
+    }
+    
+    .progress-section {
+        margin: 1 0;
+        padding: 1;
+    }
+    
+    .status-section {
+        margin: 1 0;
+        padding: 1;
+        background: $panel;
+    }
+    
+    .input-row {
+        margin: 1 0;
+    }
+    
+    .label {
+        width: 15;
+        content-align: right middle;
+    }
+    
+    Input {
+        width: 20;
+        margin: 0 1;
+    }
+    
+    Button {
+        margin: 1 1;
+    }
+    
+    ProgressBar {
+        margin: 1 0;
+    }
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.training_thread = None
+        self.is_training = False
     
     def compose(self):
-        yield Label("Training Control", classes="title")
-        with Horizontal():
-            yield Button("Start Training", id="start_training", variant="primary")
-            yield Button("Stop Training", id="stop_training", variant="error")
-            yield Button("Save Model", id="save_model", variant="success")
-            yield Button("Load Best Model", id="load_best", variant="warning")
-        
-        yield Label("Training Progress", classes="title")
-        with Horizontal():
-            yield ProgressBar(id="training_progress", total=100)
-            yield Label("0%", id="progress_percent")
-        
-        yield Label("Training Metrics", classes="title")
-        yield DataTable(id="metrics_table")
-        
-        yield Label("Training Logs", classes="title")
-        yield TextArea(id="training_logs", disabled=True)
-        
-        yield Label("Training History", classes="title")
-        yield TextArea(id="training_history", disabled=True)
-        
-        yield Label("Latest Checkpoint", classes="title")
-        yield Static(id="checkpoint_info")
-    
-    def on_mount(self):
-        """Initialize view components."""
-        self.logs_text = self.query_one("#training_logs")
-        self.history_text = self.query_one("#training_history")
-        self.metrics_table = self.query_one("#metrics_table")
-        self.progress_bar = self.query_one("#training_progress")
-        self.progress_percent = self.query_one("#progress_percent")
-        self.checkpoint_info = self.query_one("#checkpoint_info")
-        
-        # Setup metrics table
-        self.metrics_table.add_columns("Epoch", "Loss", "Accuracy", "Val Loss", "Val Accuracy", "Time")
-        
-        # Add log handler
-        logger.add(self._log_callback)
-        
-        # Start periodic checkpoint check
-        self.set_interval(2.0, self._check_checkpoints)
-    
-    def _log_callback(self, message):
-        """Callback for loguru messages."""
-        self.call_from_thread(self._update_logs, str(message))
-    
-    def _update_logs(self, message):
-        """Update logs text area."""
-        current = self.logs_text.text
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_msg = f"[{timestamp}] {message}\n"
-        self.logs_text.text = current + formatted_msg
-        # Auto-scroll to bottom
-        self.logs_text.cursor_location = (len(self.logs_text.text.splitlines()), 0)
-    
-    def _update_history(self, epoch_data):
-        """Update training history."""
-        current = self.history_text.text
-        history_entry = json.dumps(epoch_data, indent=2)
-        self.history_text.text = current + history_entry + "\n" + "-" * 50 + "\n"
-        
-        # Update metrics table
-        self.metrics_table.add_row(
-            str(epoch_data['epoch']),
-            f"{epoch_data['loss']:.4f}",
-            f"{epoch_data['accuracy']:.4f}",
-            f"{epoch_data['val_loss']:.4f}",
-            f"{epoch_data['val_accuracy']:.4f}",
-            epoch_data.get('time', 'N/A')
-        )
-        
-        # Update progress
-        trainer = self.app.get_trainer()
-        if trainer:
-            total_epochs = self.app.config.get('model.epochs', 100)
-            progress = (epoch_data['epoch'] / total_epochs) * 100
-            self.progress_bar.progress = progress
-            self.progress_percent.update(f"{progress:.1f}%")
-    
-    def _check_checkpoints(self):
-        """Check for new checkpoints."""
-        trainer = self.app.get_trainer()
-        if trainer:
-            best_model = trainer.find_best_model()
-            if best_model:
-                self.checkpoint_info.update(f"Latest best model: {best_model.name}")
-    
-    @on(Button.Pressed, "#start_training")
-    def start_training(self):
-        """Start training in background thread."""
-        trainer = self.app.get_trainer()
-        
-        if not trainer:
-            self.app.notify("Trainer not initialized!", severity="error")
-            return
-        
-        if trainer.is_training:
-            self.app.notify("Training already in progress!", severity="warning")
-            return
-        
-        # Clear previous logs and history
-        self.logs_text.text = ""
-        self.history_text.text = ""
-        self.metrics_table.clear()
-        
-        # Start training
-        logger.info("Starting training...")
-        self.app.notify("Training started in background")
-        
-        trainer.start_training(on_epoch_end=self._update_history)
-    
-    @on(Button.Pressed, "#stop_training")
-    def stop_training(self):
-        """Stop training."""
-        trainer = self.app.get_trainer()
-        if trainer and trainer.is_training:
-            logger.info("Stopping training...")
-            trainer.stop_training()
-            self.app.notify("Training stopped")
-    
-    @on(Button.Pressed, "#save_model")
-    def save_model(self):
-        """Save current model."""
-        trainer = self.app.get_trainer()
-        if trainer and trainer.model:
-            models_dir = Path(self.app.config.get('paths.models_dir'))
-            timestamp = time.strftime('%Y%m%d_%H%M%S')
-            model_path = models_dir / f'model_{timestamp}.keras'
+        """Create child widgets."""
+        # Configuration section
+        with Vertical(classes="config-section"):
+            yield Label("Training Configuration")
             
-            try:
-                trainer.model.save(model_path)
-                logger.info(f"Model saved to {model_path}")
-                self.app.notify(f"Model saved: {model_path.name}")
-            except Exception as e:
-                logger.error(f"Failed to save model: {e}")
-                self.app.notify(f"Error saving model: {e}", severity="error")
+            with Horizontal(classes="input-row"):
+                yield Label("Epochs:", classes="label")
+                yield Input(value="10", id="epochs_input")
+            
+            with Horizontal(classes="input-row"):
+                yield Label("Batch Size:", classes="label")
+                yield Input(value="32", id="batch_size_input")
+            
+            with Horizontal(classes="input-row"):
+                yield Label("Learning Rate:", classes="label")
+                yield Input(value="0.001", id="learning_rate_input")
+        
+        # Progress section
+        with Vertical(classes="progress-section"):
+            yield Label("Training Progress")
+            yield ProgressBar(total=100, id="progress_bar")
+            yield Label("Ready to start", id="progress_label")
+        
+        # Status section
+        with Vertical(classes="status-section"):
+            yield Label("Status: Not started", id="status_label")
+            yield Label("Loss: --", id="loss_label")
+            yield Label("Accuracy: --", id="accuracy_label")
+        
+        # Buttons
+        with Horizontal():
+            yield Button("Start Training", id="start_button", variant="primary")
+            yield Button("Stop Training", id="stop_button", variant="error", disabled=True)
+        
+        # Add a test message
+        logger.info("Training view initialized")
     
-    @on(Button.Pressed, "#load_best")
-    def load_best_model(self):
-        """Load the best saved model."""
-        trainer = self.app.get_trainer()
-        if trainer:
-            best_model_path = trainer.find_best_model()
-            if best_model_path:
-                try:
-                    trainer.model.load_weights(best_model_path)
-                    logger.info(f"Loaded best model from {best_model_path}")
-                    self.app.notify(f"Loaded best model: {best_model_path.name}")
-                except Exception as e:
-                    logger.error(f"Failed to load model: {e}")
-                    self.app.notify(f"Error loading model: {e}", severity="error")
-            else:
-                self.app.notify("No saved models found", severity="warning")
+    @on(Button.Pressed, "#start_button")
+    def on_start_training(self, event):
+        """Start training."""
+        if self.is_training:
+            self.app.notify("Training already in progress", severity="warning")
+            return
+        
+        try:
+            epochs = int(self.query_one("#epochs_input").value)
+            batch_size = int(self.query_one("#batch_size_input").value)
+            learning_rate = float(self.query_one("#learning_rate_input").value)
+            
+            logger.info(f"Starting training with epochs={epochs}, batch_size={batch_size}, lr={learning_rate}")
+            
+            # Disable inputs
+            self.query_one("#start_button").disabled = True
+            self.query_one("#stop_button").disabled = False
+            self.query_one("#epochs_input").disabled = True
+            self.query_one("#batch_size_input").disabled = True
+            self.query_one("#learning_rate_input").disabled = True
+            
+            self.is_training = True
+            self.query_one("#status_label").update("Status: Training...")
+            
+            # Start training thread
+            self.training_thread = threading.Thread(
+                target=self._run_training,
+                args=(epochs,),
+                daemon=True
+            )
+            self.training_thread.start()
+            
+        except ValueError as e:
+            self.app.notify(f"Invalid input: {e}", severity="error")
+            logger.error(f"Invalid training input: {e}")
+    
+    def _run_training(self, epochs):
+        """Run training simulation."""
+        try:
+            for epoch in range(epochs):
+                if not self.is_training:
+                    logger.info("Training stopped by user")
+                    break
+                
+                # Calculate progress
+                progress = ((epoch + 1) / epochs) * 100
+                
+                # Simulate training
+                time.sleep(0.5)
+                
+                # Simulate metrics
+                loss = 1.0 / (epoch + 1)
+                accuracy = ((epoch + 1) / epochs) * 100
+                
+                # Update UI from background thread
+                self.call_from_thread_safe(self._update_progress, progress, epoch + 1, epochs)
+                self.call_from_thread_safe(self._update_metrics, loss, accuracy)
+                
+                logger.info(f"Epoch {epoch + 1}/{epochs} - Loss: {loss:.4f}, Accuracy: {accuracy:.2f}%")
+            
+            if self.is_training:
+                self.call_from_thread_safe(self._training_complete)
+                
+        except Exception as e:
+            logger.error(f"Training error: {e}")
+            self.call_from_thread_safe(self._training_error, str(e))
+        finally:
+            self.call_from_thread_safe(self._enable_ui)
+    
+    def _update_progress(self, progress, current_epoch, total_epochs):
+        """Update progress bar."""
+        self.query_one("#progress_bar").progress = progress
+        self.query_one("#progress_label").update(f"Epoch {current_epoch}/{total_epochs}")
+    
+    def _update_metrics(self, loss, accuracy):
+        """Update metrics display."""
+        self.query_one("#loss_label").update(f"Loss: {loss:.4f}")
+        self.query_one("#accuracy_label").update(f"Accuracy: {accuracy:.2f}%")
+    
+    def _training_complete(self):
+        """Handle training completion."""
+        self.query_one("#status_label").update("Status: Training Complete!")
+        self.app.notify("Training completed successfully!")
+        self.is_training = False
+        logger.info("Training completed successfully")
+    
+    def _training_error(self, error):
+        """Handle training error."""
+        self.query_one("#status_label").update(f"Status: Error - {error}")
+        self.app.notify(f"Training error: {error}", severity="error")
+        self.is_training = False
+        logger.error(f"Training error: {error}")
+    
+    def _enable_ui(self):
+        """Re-enable UI after training."""
+        self.query_one("#start_button").disabled = False
+        self.query_one("#stop_button").disabled = True
+        self.query_one("#epochs_input").disabled = False
+        self.query_one("#batch_size_input").disabled = False
+        self.query_one("#learning_rate_input").disabled = False
+        
+        if not self.is_training:
+            self.query_one("#status_label").update("Status: Ready")
+    
+    @on(Button.Pressed, "#stop_button")
+    def on_stop_training(self, event):
+        """Stop training."""
+        self.is_training = False
+        self.query_one("#status_label").update("Status: Stopping...")
+        self.app.notify("Stopping training...", severity="warning")
+        logger.info("Training stop requested")
