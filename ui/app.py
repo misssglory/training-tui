@@ -12,6 +12,7 @@ from ui.dataset_view import DatasetView
 from ui.training_view import TrainingView
 from ui.model_summary_view import ModelSummaryView
 from ui.chat_view import ChatView
+from ui.logs_view import LogsView
 
 # Import core modules
 from config import Config
@@ -107,6 +108,9 @@ class TransformerApp(App):
             
             with TabPane("Chat", id="chat"):
                 yield ChatView()
+            
+            with TabPane("Logs", id="logs"):
+                yield LogsView()
         
         yield Footer()
     
@@ -162,7 +166,6 @@ class TransformerApp(App):
                     num_layers=num_layers,
                     dropout_rate=dropout_rate
                 )
-                # Don't try to count parameters until built
                 self.logger.info(f"Created Transformer model (will be built during first use)")
                 
             elif model_type == 'transformer_qa':
@@ -196,7 +199,7 @@ class TransformerApp(App):
             self.preprocessor.vocab_size = vocab_size
             self.preprocessor.max_len = max_len
             
-            # Create trainer (model may be built during training)
+            # Create trainer
             self.trainer = Trainer(self.config, self.model, self.dataset, self.preprocessor)
             
             # Refresh UI if mounted
@@ -212,7 +215,6 @@ class TransformerApp(App):
     def refresh_model_views(self):
         """Refresh any views that display model information."""
         try:
-            # Refresh model summary view
             model_summary = self.query_one("#summary")
             if hasattr(model_summary, 'load_model_summary'):
                 model_summary.load_model_summary()
@@ -220,7 +222,6 @@ class TransformerApp(App):
             self.logger.debug(f"Could not refresh model summary: {e}")
         
         try:
-            # Refresh training view
             training_view = self.query_one("#training")
             if hasattr(training_view, 'update_model_info'):
                 training_view.update_model_info()
@@ -228,7 +229,6 @@ class TransformerApp(App):
             self.logger.debug(f"Could not refresh training view: {e}")
         
         try:
-            # Refresh chat view
             chat_view = self.query_one("#chat")
             if hasattr(chat_view, 'update_status'):
                 chat_view.update_status()
